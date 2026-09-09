@@ -1,0 +1,14 @@
+node_modules/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+.env
+.env.local
+.cache/
+_tmp/
+
+# 本地调试产物（_tools/ 目录只放本机脚本，不属于发布包；不进仓库）
+_tools/shots/
+_tools/.cache/

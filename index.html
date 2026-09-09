@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#F7F1E3">
+<meta name="description" content="BEADY · 在线拼豆模拟器 —— 打开网页就能拼的治愈系拼豆小游戏，自由创作、照图挑战、熨烫成品、导出 PNG。">
+<title>BEADY · 在线拼豆</title>
+<link rel="icon" type="image/svg+xml" href="assets/icons/favicon.svg">
+<link rel="apple-touch-icon" href="assets/icons/favicon.svg">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ==================== 首页 ==================== -->
+  <section id="screen-home" class="screen is-active">
+    <canvas id="home-beads" class="home-beads" aria-hidden="true"></canvas>
+
+    <div class="home-inner">
+      <header class="home-brand">
+        <div class="bead-logo" aria-hidden="true"></div>
+        <h1 class="home-title">BEADY</h1>
+        <p class="home-sub">Pick a color. Place a bead. Make something.</p>
+      </header>
+
+      <div class="home-hero">
+        <div class="hero-card">
+          <canvas id="hero-art" aria-label="拼豆作品：爱心"></canvas>
+        </div>
+        <div class="hero-shadow" aria-hidden="true"></div>
+      </div>
+
+      <nav class="home-actions">
+        <button class="btn btn-primary btn-lg" id="btn-free">
+          <span class="btn-ico ico-free"></span>
+          <span class="btn-text">自由拼豆</span>
+        </button>
+        <button class="btn btn-lg" id="btn-templates">
+          <span class="btn-ico ico-tpl"></span>
+          <span class="btn-text">模板挑战</span>
+        </button>
+        <button class="btn btn-lg" id="btn-image">
+          <span class="btn-ico ico-img"></span>
+          <span class="btn-text">图片转拼豆</span>
+        </button>
+        <button class="btn btn-lg" id="btn-gallery">
+          <span class="btn-ico ico-gal"></span>
+          <span class="btn-text">我的作品</span>
+        </button>
+      </nav>
+
+      <div class="home-resume hidden" id="home-resume">
+        <span class="resume-dot"></span>
+        <span id="home-resume-text">有未完成的作品</span>
+        <button class="btn btn-ghost btn-sm" id="home-resume-btn">继续创作</button>
+      </div>
+
+      <footer class="home-foot">
+        <button class="icon-btn" id="btn-open-settings" title="设置">
+          <span class="ico-gear"></span>
+        </button>
+        <span class="foot-note">本地保存 · 无需登录</span>
+      </footer>
+    </div>
+  </section>
+
+  <!-- ==================== 模板选择 ==================== -->
+  <section id="screen-templates" class="screen">
+    <header class="sub-head">
+      <button class="icon-btn" id="tpl-back" title="返回"><span class="ico-back"></span></button>
+      <div class="sub-title">
+        <h2>模板挑战</h2>
+        <p>选一张图，照着拼出属于你的拼豆作品</p>
+      </div>
+    </header>
+    <div class="chips" id="tpl-filter">
+      <button class="chip is-on" data-diff="0">全部</button>
+      <button class="chip" data-diff="1">简单</button>
+      <button class="chip" data-diff="2">中等</button>
+      <button class="chip" data-diff="3">较复杂</button>
+    </div>
+    <div class="tpl-grid" id="tpl-grid"></div>
+  </section>
+
+  <!-- ==================== 编辑器 ==================== -->
+  <section id="screen-editor" class="screen">
+    <header class="ed-head">
+      <button class="icon-btn" id="ed-back" title="返回"><span class="ico-back"></span></button>
+
+      <div class="ed-head-main">
+        <h2 id="ed-title">自由拼豆</h2>
+        <div class="ed-progress hidden" id="ed-progress">
+          <div class="pg-bar"><i id="ed-progress-bar"></i></div>
+          <span class="pg-num"><b id="ed-progress-num">0 / 0</b><em id="ed-progress-pct">0%</em></span>
+        </div>
+      </div>
+
+      <div class="ed-head-tools">
+        <button class="tool-btn" id="ed-undo" title="撤销 (Ctrl+Z)"><span class="ico-undo"></span></button>
+        <button class="tool-btn" id="ed-redo" title="重做 (Ctrl+Y)"><span class="ico-redo"></span></button>
+        <button class="tool-btn" id="ed-clear" title="清空"><span class="ico-trash"></span></button>
+        <button class="tool-btn" id="ed-ghost" title="显示/隐藏颜色提示"><span class="ico-eye"></span></button>
+        <button class="btn btn-warn btn-sm" id="ed-iron"><span class="ico-iron"></span>熨烫作品</button>
+        <button class="btn btn-sm" id="ed-save"><span class="ico-save"></span>保存</button>
+        <button class="icon-btn" id="ed-sound" title="音效开关"><span class="ico-sound"></span></button>
+      </div>
+    </header>
+
+    <div class="ed-body">
+      <aside class="ed-side" id="ed-side">
+        <div class="side-card" id="ed-info">
+          <h3>颜色清单</h3>
+          <div class="side-colors" id="ed-colors"></div>
+          <p class="side-tip" id="ed-tip">选一个颜色，点格子放豆</p>
+        </div>
+        <div class="side-card side-zoom">
+          <div class="zoom-group">
+            <button class="tool-btn" id="ed-zoom-out" title="缩小"><span class="ico-minus"></span></button>
+            <span id="ed-zoom-val">100%</span>
+            <button class="tool-btn" id="ed-zoom-in" title="放大"><span class="ico-plus"></span></button>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="ed-fit">适应画面</button>
+        </div>
+      </aside>
+
+      <div class="ed-stage" id="ed-stage">
+        <canvas id="ed-canvas"></canvas>
+        <div class="stage-hint" id="stage-hint"></div>
+      </div>
+    </div>
+
+    <div class="ed-mobilebar" id="ed-mobilebar">
+      <div class="m-progress" id="m-progress">
+        <span id="m-progress-num">0 / 0</span>
+        <b id="m-progress-pct">0%</b>
+      </div>
+      <div class="m-tools">
+        <button class="icon-btn" id="m-undo" title="撤销"><span class="ico-undo"></span></button>
+        <button class="icon-btn" id="m-redo" title="重做"><span class="ico-redo"></span></button>
+        <button class="icon-btn" id="m-sound" title="音效"><span class="ico-sound"></span></button>
+      </div>
+    </div>
+
+    <footer class="ed-pal">
+      <div class="pal-tools">
+        <button class="pal-tool is-on" id="tool-bead" title="拼豆笔"><span class="ico-pen"></span><i>拼豆</i></button>
+        <button class="pal-tool" id="tool-erase" title="橡皮"><span class="ico-eraser"></span><i>橡皮</i></button>
+        <button class="pal-tool" id="tool-pick" title="吸管"><span class="ico-drop"></span><i>吸管</i></button>
+        <button class="pal-tool" id="tool-move" title="移动画布"><span class="ico-hand"></span><i>移动</i></button>
+        <div class="pal-cur" id="pal-cur" title="当前颜色"><canvas id="pal-cur-cv"></canvas></div>
+      </div>
+      <div class="pal-scroll" id="pal-list"></div>
+    </footer>
+  </section>
+
+  <!-- ==================== 我的作品 ==================== -->
+  <section id="screen-gallery" class="screen">
+    <header class="sub-head">
+      <button class="icon-btn" id="gal-back" title="返回"><span class="ico-back"></span></button>
+      <div class="sub-title">
+        <h2>我的作品</h2>
+        <p id="gal-sub">保存在本机浏览器里，刷新也不会丢</p>
+      </div>
+    </header>
+    <div class="gal-grid" id="gal-grid"></div>
+    <div class="empty" id="gal-empty">
+      <div class="empty-art"></div>
+      <h3>还没有作品</h3>
+      <p>去自由拼豆或挑一个模板，拼好后点右上角「保存」</p>
+      <button class="btn btn-primary" id="gal-go">开始拼豆</button>
+    </div>
+  </section>
+
+  <!-- ==================== 图片转拼豆 ==================== -->
+  <section id="screen-image" class="screen">
+    <header class="sub-head">
+      <button class="icon-btn" id="img-back" title="返回"><span class="ico-back"></span></button>
+      <div class="sub-title">
+        <h2>图片转拼豆</h2>
+        <p>图片只在你自己的浏览器里处理，不会上传</p>
+      </div>
+    </header>
+
+    <div class="img-body">
+      <div class="drop-zone" id="img-drop">
+        <input type="file" id="img-input" accept="image/*" hidden>
+        <div class="drop-inner">
+          <div class="drop-ico"></div>
+          <h3>点击或拖入一张图片</h3>
+          <p>支持 JPG / PNG</p>
+        </div>
+        <canvas id="img-src" class="img-src hidden"></canvas>
+      </div>
+
+      <div class="img-panel">
+        <div class="panel-row">
+          <label>拼豆尺寸</label>
+          <div class="chips" id="img-sizes">
+            <button class="chip" data-size="16">16×16</button>
+            <button class="chip is-on" data-size="24">24×24</button>
+            <button class="chip" data-size="32">32×32</button>
+            <button class="chip" data-size="48">48×48</button>
+          </div>
+        </div>
+        <div class="panel-row">
+          <label>对比度</label>
+          <input type="range" id="img-contrast" min="0" max="60" value="18">
+        </div>
+        <div class="panel-row switch-row">
+          <label for="img-ignore">去掉浅色背景</label>
+          <label class="switch"><input type="checkbox" id="img-ignore" checked><i></i></label>
+        </div>
+        <div class="img-preview">
+          <div class="pv-box"><span>原图</span><div class="pv-holder" id="pv-src"></div></div>
+          <div class="pv-arrow"></div>
+          <div class="pv-box"><span>拼豆稿</span><div class="pv-holder" id="pv-bead"></div></div>
+        </div>
+        <button class="btn btn-primary btn-block" id="img-start" disabled>开始照图拼</button>
+        <p class="img-note" id="img-note">先选一张图片吧</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- ==================== 完成页 ==================== -->
+<div class="overlay" id="modal-finish" hidden>
+  <div class="finish-card">
+    <div class="finish-badge">作品完成！</div>
+    <div class="finish-art"><canvas id="finish-art"></canvas></div>
+    <h3 id="finish-name">我的拼豆作品</h3>
+    <p id="finish-meta">24 × 24 · 128 颗拼豆</p>
+    <div class="finish-actions">
+      <button class="btn btn-primary" id="finish-save"><span class="ico-download"></span>保存图片</button>
+      <button class="btn" id="finish-again">再拼一个</button>
+      <button class="btn" id="finish-home">返回首页</button>
+      <button class="btn btn-ghost" id="finish-edit">继续编辑</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 设置 ==================== -->
+<div class="overlay" id="modal-settings" hidden>
+  <div class="sheet">
+    <h3>设置</h3>
+    <div class="row switch-row">
+      <label for="set-sound">音效反馈</label>
+      <label class="switch"><input type="checkbox" id="set-sound" checked><i></i></label>
+    </div>
+    <div class="row">
+      <label>本地占用</label>
+      <span id="set-usage" class="muted">0 KB</span>
+    </div>
+    <div class="row">
+      <button class="btn btn-ghost btn-sm" id="set-clear">清空全部作品</button>
+      <button class="btn btn-ghost btn-sm" id="set-credits">素材与版权</button>
+    </div>
+    <div class="sheet-help">
+      <h4>操作方式</h4>
+      <ul>
+        <li><b>电脑</b>：左键放豆 · 右键擦除 · 拖动连续画 · 滚轮缩放 · 空格+拖动移动 · Ctrl+Z 撤销 · Ctrl+Y 重做</li>
+        <li><b>手机</b>：点按放豆 · 拖动连续画 · 双指缩放 · 底部切换橡皮/移动</li>
+      </ul>
+    </div>
+    <button class="btn btn-primary btn-block" id="set-close">关闭</button>
+  </div>
+</div>
+
+<!-- ==================== 通用弹层 ==================== -->
+<div class="overlay" id="modal-confirm" hidden>
+  <div class="sheet sheet-sm">
+    <h3 id="confirm-title">确认</h3>
+    <p id="confirm-text" class="muted"></p>
+    <div class="row row-end">
+      <button class="btn btn-ghost" id="confirm-no">取消</button>
+      <button class="btn btn-danger" id="confirm-yes">确定</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<noscript>
+  <div class="noscript">BEADY 需要启用 JavaScript 才能运行。</div>
+</noscript>
+
+<!-- 依赖顺序：工具 -> 数据 -> 渲染 -> 特性 -> 应用 -->
+<script src="src/core/util.js"></script>
+<script src="src/core/palette.js"></script>
+<script src="src/core/audio.js"></script>
+<script src="src/render/sprites.js"></script>
+<script src="src/render/board.js"></script>
+<script src="src/features/exporter.js"></script>
+<script src="src/core/storage.js"></script>
+<script src="src/features/imagetobead.js"></script>
+<script src="src/ui/icons.js"></script>
+<script src="assets/templates/templates.js" onerror="window.__BEADY_TEMPLATES_FAILED__=true"></script>
+<script src="src/ui/app.js"></script>
+</body>
+</html>

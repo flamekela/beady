@@ -1,0 +1,17 @@
+{
+  "name": "beady",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BEADY · 在线拼豆模拟器 —— 打开网页就能拼的治愈系拼豆小游戏（纯前端、无后端、可静态托管）",
+  "keywords": ["perler beads", "fuse beads", "pixel art", "canvas", "game", "beady"],
+  "license": "MIT",
+  "scripts": {
+    "dev": "node scripts/dev-server.js",
+    "start": "node scripts/dev-server.js",
+    "templates": "node scripts/build-templates.js",
+    "templates:preview": "node scripts/build-templates.js --preview"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "browserslist": ["> 0.5%", "last 2 versions", "not dead"]
+}
