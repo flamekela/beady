@@ -75,6 +75,7 @@
     pendingImage: null,
     imageResult: null,
     _baseCell: 24,
+    _uiRaf: 0,
 
     init: function () {
       Templates.list = Templates.load();
@@ -407,7 +408,7 @@
       App.curTool = 'bead';
       App.syncToolButtons();
       App.rebuildSideColors();
-      App.updateEdUI();
+      App.updateEdUINow();
     },
 
     _loadDraftIntoBoard: function () {
@@ -424,13 +425,33 @@
         b.resize();
         b.fit(0.88);
         App._baseCell = b.cell;
-        App.updateEdUI();
+        App.updateEdUINow();
       });
     },
 
     /** 由 Board 回调：progress / title / 按钮可用性 */
     updateEdUI: function () {
       const b = App.board;
+      if (!b) return;
+      // 拖动时 onChange 可能每移动一格就触发一次；输入热路径只负责画板，
+      // 这里把 DOM 写入合并到下一帧，保证连续点按 / 拖动不被 UI 工作拖慢。
+      App.saveDraft();
+      if (App._uiRaf) return;
+      App._uiRaf = requestAnimationFrame(function () {
+        App._uiRaf = 0;
+        App._syncEdUI();
+      });
+    },
+
+    /** 立即执行（不合并）——用于进入编辑器、载入作品、熨烫完成等需要同步外观的场合 */
+    updateEdUINow: function () {
+      if (App._uiRaf) { cancelAnimationFrame(App._uiRaf); App._uiRaf = 0; }
+      App._syncEdUI();
+    },
+
+    _syncEdUI: function () {
+      const b = App.board;
+      if (!b) return;
       const sess = App.session;
       $('ed-undo').disabled = !b.canUndo();
       $('ed-redo').disabled = !b.canRedo();
@@ -456,7 +477,6 @@
       }
       const pct = Math.round(b.cell / (App._baseCell || 24) * 100);
       $('ed-zoom-val').textContent = pct + '%';
-      App.saveDraft();
     },
 
     rebuildSideColors: function () {
@@ -557,6 +577,7 @@
     _bindEditor: function () {
       const canvas = App.dom.edCanvas;
       App.board = new Board(canvas, {
+        // 热路径只做画板绘制 + 合并到下一帧的轻量 UI 刷新，不阻塞输入
         onChange: function () { App.updateEdUI(); },
         onComplete: function () {
           App.toast('完成啦！要不要熨烫一下？');
@@ -584,9 +605,9 @@
       });
       wrapToButton('ed-iron', function () { App.doIron(); });
       wrapToButton('ed-save', function () { App.doSave(); });
-      wrapToButton('ed-fit', function () { App.board.fit(0.88); App._baseCell = App.board.cell; App.updateEdUI(); });
-      wrapToButton('ed-zoom-in', function () { App.board.zoomAt(1.25); App.updateEdUI(); });
-      wrapToButton('ed-zoom-out', function () { App.board.zoomAt(0.8); App.updateEdUI(); });
+      wrapToButton('ed-fit', function () { App.board.fit(0.88); App._baseCell = App.board.cell; App.updateEdUINow(); });
+      wrapToButton('ed-zoom-in', function () { App.board.zoomAt(1.25); App.updateEdUINow(); });
+      wrapToButton('ed-zoom-out', function () { App.board.zoomAt(0.8); App.updateEdUINow(); });
       wrapToButton('ed-ghost', function () {
         App.board.showGhost = !App.board.showGhost;
         App.board._layerKey = '';
@@ -783,7 +804,7 @@
       b._recomputeProgress();
       App.rebuildSideColors();
       App.setTool('bead');
-      requestAnimationFrame(function () { b.resize(); b.fit(0.88); App._baseCell = b.cell; App.updateEdUI(); });
+      requestAnimationFrame(function () { b.resize(); b.fit(0.88); App._baseCell = b.cell; App.updateEdUINow(); });
     },
 
     viewWork: function (w) {
@@ -819,7 +840,7 @@
         else { App.board.loadGrid(new Int16Array(App.board.size * App.board.size).fill(-1), App.board.size); }
         App.board.ironed = false;
         App.session.workId = null;
-        App.updateEdUI();
+        App.updateEdUINow();
         App.toast('新的一张，开始吧');
       });
       $('finish-home').addEventListener('click', function () {
@@ -890,7 +911,7 @@
         App.setTool('bead');
         App.rebuildSideColors();
         requestAnimationFrame(function () {
-          b.resize(); b.fit(0.88); App._baseCell = b.cell; b.requestRender(); App.updateEdUI();
+          b.resize(); b.fit(0.88); App._baseCell = b.cell; b.requestRender(); App.updateEdUINow();
         });
       });
     },
