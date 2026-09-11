@@ -81,9 +81,23 @@
 
     /* ==================== 生命周期 / 数据 ==================== */
 
-    setSize: function (n) {
+    /**
+     * 设定画板尺寸。
+     *
+     * 默认语义 = 「仅调整尺寸」：尺寸没变时是 no-op（保留当前内容），
+     * 只有尺寸真的变了才重建。用于尺寸切换等需要保留/重建内容的场合。
+     *
+     * opts.reset === true = 「新建空白画板」：无论尺寸是否变化，一律清空
+     * grid / 目标图 / 历史(undo·redo) / 动画 / 错误标记 / 粒子 / 熨烫状态 /
+     * 编辑笔状态 / 图层缓存，并重绘 + 通知宿主。
+     *
+     * 业务意图是「新建」时请调用 newBoard()，不要用 setSize() 表达 —— 因为
+     * 同尺寸的 setSize() 是 no-op，表达不出「清空」。
+     */
+    setSize: function (n, opts) {
+      const reset = !!(opts && opts.reset);
       const p = Math.max(4, Math.min(96, n | 0));
-      if (p === this.size && this.grid.length === p * p) return;
+      if (!reset && p === this.size && this.grid.length === p * p) return;
       this.size = p;
       this.grid = new Int16Array(p * p).fill(Palette.EMPTY);
       this.target = null; this.targetTotal = 0; this.correctCount = 0;
@@ -91,9 +105,18 @@
       this.anims.clear(); this.wrong.clear(); this.sparks.length = 0;
       this.ironed = false; this.ironing = false; this.iron = null;
       this.completed = false; this._celebrated = false;
+      // 编辑笔状态：避免上一张板的笔画残留（残留的 stroke 会在 endStroke 时
+      // 把旧板的格子索引写进新板的历史栈）
+      this.stroke = null; this.lastCell = null; this.paintCount = 0;
+      this.pinch = null; this.panning = false;
       this._layerKey = '';
       this.requestRender();
       this._notify();
+    },
+
+    /** 新建一张空白画板（尺寸可变）。语义 = setSize(size, { reset: true }) */
+    newBoard: function (n) {
+      this.setSize(n, { reset: true });
     },
 
     /** 直接装载格子数据（长度需等于 size*size） */

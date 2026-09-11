@@ -392,15 +392,21 @@
       const b = App.board;
       $('stage-hint').textContent = '';
 
+      // 四条入口的语义在此明确区分：
+      //   首页「自由拼豆」/ 我的作品空态「开始拼豆」/ 图片转拼豆 / 模板挑战 → 新板
+      //   首页「继续上次」(restoreDraft=true)                              → 恢复草稿
+      //   「我的作品 → 继续编辑」→ 不走这里，由 editWork() 自行装载指定作品
       if (sess.mode === 'template') {
         const t = Templates.byId(sess.templateId);
         if (t) { b.loadTemplate(t); }
-        else if (restoreDraft) { App._loadDraftIntoBoard(); }
-        else { b.setSize(sess.size); b.target = null; }
+        else if (restoreDraft && Store.getDraft()) { App._loadDraftIntoBoard(); }
+        else { b.newBoard(sess.size); }        // 模板数据缺失时退化为空白板
       } else {
-        b.setSize(sess.size);
-        b.target = null;
-        if (restoreDraft) App._loadDraftIntoBoard();
+        b.target = null;                       // 自由创作没有目标图
+        // 必须用 newBoard 而非 setSize：自由模式尺寸恒为 24，而 setSize(24)
+        // 在同尺寸时是 no-op，表达不出「新建空白板」，会把上一张板的内容带进来。
+        if (restoreDraft && Store.getDraft()) App._loadDraftIntoBoard();
+        else b.newBoard(sess.size);
       }
       b.ironed = !!(restoreDraft && Store.getDraft() && Store.getDraft().ironed);
       b.showGhost = true;
