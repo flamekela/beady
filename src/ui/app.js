@@ -115,6 +115,8 @@
         galEmpty: $('gal-empty'),
         edCanvas: $('ed-canvas'),
         edStage: $('ed-stage'),
+        edTitleBtn: $('ed-title-btn'),
+        sizeMenu: $('size-menu'),
         palList: $('pal-list'),
         palCur: $('pal-cur-cv'),
         edColors: $('ed-colors')
@@ -142,11 +144,18 @@
       App._toastT = setTimeout(function () { t.classList.remove('is-on'); }, 1900);
     },
 
-    confirm: function (title, text) {
+    /**
+     * 通用确认框（Promise<boolean>）。
+     * opts.yesText / opts.noText 可自定义按钮文案（默认「确定」/「取消」）。
+     */
+    confirm: function (title, text, opts) {
+      const o = opts || {};
       return new Promise(function (resolve) {
         const m = $('modal-confirm');
         $('confirm-title').textContent = title;
         $('confirm-text').textContent = text || '';
+        $('confirm-yes').textContent = o.yesText || '确定';
+        $('confirm-no').textContent = o.noText || '取消';
         m.hidden = false;
         const done = function (v) {
           m.hidden = true;
@@ -391,6 +400,7 @@
       const sess = App.session;
       const b = App.board;
       $('stage-hint').textContent = '';
+      App.closeSizeMenu();
 
       // 四条入口的语义在此明确区分：
       //   首页「自由拼豆」/ 我的作品空态「开始拼豆」/ 图片转拼豆 / 模板挑战 → 新板
@@ -423,6 +433,78 @@
       App.session.size = d.size;
       App.board.size = d.size;
       App.board.loadGrid(Util.decodeGrid(d.grid, d.size * d.size), d.size);
+    },
+
+    /* ------------------ 自由模式：画板尺寸选择（FIX03） ------------------ */
+    /** 自由模式可选尺寸。
+     *  模板挑战（含图片转拼豆）由各自流程决定尺寸，不使用本选择器。 */
+    SIZE_OPTIONS: [16, 24, 32, 48],
+
+    /** 打开 / 关闭尺寸菜单。模板 / 图片模式下入口不存在，直接忽略。 */
+    toggleSizeMenu: function (force) {
+      const b = App.board;
+      if (!b || b.target) return;                       // 非自由模式：无尺寸选择器
+      const open = (force === undefined) ? !App._sizeMenuOpen : !!force;
+      App._sizeMenuOpen = open;
+      if (App.dom.sizeMenu) App.dom.sizeMenu.hidden = !open;
+      if (App.dom.edTitleBtn) {
+        App.dom.edTitleBtn.classList.toggle('is-open', open);
+        App.dom.edTitleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }
+      if (open) App._markSizeMenu();
+    },
+
+    closeSizeMenu: function () {
+      if (!App._sizeMenuOpen) return;
+      App._sizeMenuOpen = false;
+      if (App.dom.sizeMenu) App.dom.sizeMenu.hidden = true;
+      if (App.dom.edTitleBtn) {
+        App.dom.edTitleBtn.classList.remove('is-open');
+        App.dom.edTitleBtn.setAttribute('aria-expanded', 'false');
+      }
+    },
+
+    /** 把「当前画板尺寸」标记为选中项 */
+    _markSizeMenu: function () {
+      const menu = App.dom.sizeMenu;
+      if (!menu) return;
+      const cur = App.board ? App.board.size : 0;
+      const opts = menu.querySelectorAll('.size-opt');
+      for (let i = 0; i < opts.length; i++) {
+        opts[i].classList.toggle('is-on', parseInt(opts[i].getAttribute('data-size'), 10) === cur);
+      }
+    },
+
+    /**
+     * 选择画板尺寸（页面上的唯一入口）。
+     *   - 画板为空   → 直接新建
+     *   - 已有拼豆   → 必须先确认（绝不静默清空）
+     * V1.0 不做缩放迁移 / 裁剪，确认后就是一张空板。
+     */
+    pickSize: function (n) {
+      const b = App.board;
+      n = parseInt(n, 10);
+      if (!b || !n) return;
+      App.closeSizeMenu();
+      if (App.SIZE_OPTIONS.indexOf(n) < 0) return;      // 只接受产品定义的档位
+      if (b.size === n) return;                         // 同尺寸：无事发生
+
+      const apply = function () {
+        App.session.size = n;                           // 会话尺寸同步（草稿 / 作品均取实际尺寸）
+        b.newBoard(n);                                  // 新建空板：含 grid / 历史 / 动画 / 图层缓存重置
+        App.rebuildSideColors();
+        requestAnimationFrame(function () {
+          b.resize();
+          b.fit(0.88);
+          App._baseCell = b.cell;
+          App.updateEdUINow();
+        });
+        App.toast('已切换到 ' + n + '×' + n);
+      };
+
+      if (!b.filledCount()) { apply(); return; }
+      App.confirm('切换画板尺寸？', '切换画板尺寸会清空当前未保存的内容，是否继续？', { yesText: '切换尺寸' })
+        .then(function (yes) { if (yes) apply(); });
     },
 
     onEnterEditor: function () {
@@ -466,6 +548,14 @@
       $('m-progress').classList.toggle('hidden', !isTpl);
       $('ed-side').classList.toggle('is-free', !isTpl);
 
+      // 自由模式才提供尺寸选择器；模板 / 图片模式禁用入口并隐藏小三角
+      const titleBtn = App.dom.edTitleBtn;
+      if (titleBtn) {
+        titleBtn.classList.toggle('is-static', isTpl);
+        titleBtn.title = isTpl ? '' : '选择画板尺寸';
+      }
+      if (isTpl) App.closeSizeMenu();
+
       if (isTpl) {
         const t = Templates.byId(sess.templateId);
         const pg = b.getProgress();
@@ -480,6 +570,7 @@
         const filled = b.filledCount();
         $('ed-title').textContent = '自由拼豆 · ' + b.size + '×' + b.size;
         $('ed-title').setAttribute('data-filled', filled);
+        App._markSizeMenu();          // 菜单里的选中项跟随当前尺寸
       }
       const pct = Math.round(b.cell / (App._baseCell || 24) * 100);
       $('ed-zoom-val').textContent = pct + '%';
@@ -622,6 +713,29 @@
       });
       wrapToButton('m-undo', function () { App.board.undo(); });
       wrapToButton('m-redo', function () { App.board.redo(); });
+
+      /* -------- 自由模式：画板尺寸选择（点标题 → 小型菜单） -------- */
+      const titleBtn = $('ed-title-btn');
+      const sizeMenu = $('size-menu');
+      if (titleBtn) {
+        titleBtn.addEventListener('click', function () { Audio.unlock(); App.toggleSizeMenu(); });
+      }
+      if (sizeMenu) {
+        sizeMenu.addEventListener('click', function (e) {
+          const opt = (e.target && e.target.closest) ? e.target.closest('.size-opt') : null;
+          if (!opt) return;
+          Audio.unlock(); Audio.tap();
+          App.pickSize(opt.getAttribute('data-size'));
+        });
+      }
+      // 点菜单以外的任何地方收起菜单
+      document.addEventListener('click', function (e) {
+        if (!App._sizeMenuOpen) return;
+        const t = e.target;
+        if (titleBtn && titleBtn.contains(t)) return;
+        if (sizeMenu && sizeMenu.contains(t)) return;
+        App.closeSizeMenu();
+      });
 
       const toggleSound = function () {
         const on = !(App.settings.sound !== false);
