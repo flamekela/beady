@@ -22,6 +22,11 @@
   function easeOutCubic(p) { return 1 - Math.pow(1 - p, 3); }
   function smoothstep(p) { return p <= 0 ? 0 : (p >= 1 ? 1 : p * p * (3 - 2 * p)); }
 
+  /** 调试追踪（仅 ?debug=1 时非空；平时为 null，零开销零行为改变） */
+  function TR() {
+    return (global.BeadyTrace && global.BeadyTrace.enabled) ? global.BeadyTrace : null;
+  }
+
   function BeadyBoard(canvas, opts) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
@@ -409,6 +414,10 @@
       cv.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
       cv.addEventListener('pointerdown', function (e) {
+        const tr = TR();
+        if (tr) tr.log({ ev: 'pointerdown', id: e.pointerId, button: e.button, buttons: e.buttons,
+                         cx: Math.round(e.clientX), cy: Math.round(e.clientY),
+                         interactive: self.interactive, tool: self.tool, space: self.spaceDown, pointers: self.pointers.size });
         if (!self.interactive) return;
         // 阻止 iOS 长按弹出「拷贝/查询」菜单，并确保后续能收到 pointerup
         try { e.preventDefault(); } catch (err) { /* ignore */ }
@@ -471,6 +480,7 @@
       });
 
       const endPointer = function (e) {
+        if (TR()) TR().log({ ev: 'pointerup', id: e.pointerId, remaining: self.pointers.size - 1, grid: self.lastCell != null ? self.grid[self.lastCell] : null });
         self.pointers.delete(e.pointerId);
         if (self.pointers.size < 2) self.pinch = null;
         if (self.pointers.size === 0) {
@@ -509,13 +519,24 @@
     beginStroke: function (e, colorIdx) {
       const p = this._pt(e);
       const idx = this.cellAt(p.x, p.y);
-      if (idx < 0) return;
+      const tr = TR();
+      if (tr) tr.log({ ev: 'cellAt', px: Math.round(p.x), py: Math.round(p.y), idx: idx,
+                       ox: this.ox, oy: this.oy, cell: this.cell, size: this.size, iw: this.canvas.clientWidth, ih: this.canvas.clientHeight });
+      if (idx < 0) { if (tr) tr.log({ ev: 'cellAt-miss', idx: idx }); return; }
       this.stroke = { color: colorIdx, ops: [], lastIdx: -1 };
       this.lastCell = idx;
+      const before = this.grid[idx];
+      const pxBefore = tr ? tr.sampleCell(idx) : null;
       this.setCell(idx, colorIdx, false);
+      if (tr) tr.log({ ev: 'setCell', idx: idx, before: before, after: this.grid[idx], anims: this.anims.size, pxBefore: pxBefore });
       this.paintCount = 1;
       // 首触必须当帧可见：立刻绘制，不等下一次 rAF 回调
       this._paintNow();
+      if (tr) {
+        const pxAfter = tr.sampleCell(idx);
+        tr.log({ ev: 'afterPaintNow', idx: idx, grid: this.grid[idx], px: pxAfter,
+                 pixelDiff: tr.pixelDiff(pxBefore, pxAfter), raf: this._raf, drewIdx: tr.frame ? tr.frame.drew.slice(0, 40) : [] });
+      }
       this._notify();
     },
 
@@ -565,13 +586,18 @@
 
     endStroke: function () {
       if (!this.stroke) return;
+      const tr = TR();
       const ops = this.stroke.ops;
+      const idx = this.lastCell;
       this.stroke = null;
       this.lastCell = null;
       if (ops.length) {
         this._pushOps(ops);
         this._recomputeProgress();
       }
+      if (tr) tr.log({ ev: 'endStroke', ops: ops.length, idx: idx,
+                       grid: (idx != null && idx >= 0) ? this.grid[idx] : null,
+                       px: (idx != null && idx >= 0) ? tr.sampleCell(idx) : null });
       this.requestRender();
       this._notify();
     },
@@ -593,24 +619,49 @@
     /* ==================== 渲染 ==================== */
 
     requestRender: function () {
-      if (this._raf) return;
+      if (this._raf) { if (TR()) TR().log({ ev: 'requestRender-earlyReturn', raf: this._raf }); return; }
       const self = this;
       this._raf = requestAnimationFrame(function (t) {
         self._raf = 0;
         self.render(t);
       });
+      if (TR()) TR().log({ ev: 'requestRender-scheduled', raf: this._raf });
     },
 
     /**
      * 首触即时反馈：立即同步绘制一帧。
      * 只负责把「当前 grid / anims」画到画布上，不含任何 UI 或存储工作。
-     * 若已排队的 rAF 帧被本次同步绘制吸收，则取消它，避免同帧画两遍。
+     *
+     * 安全写法（FIX01-R1）：
+     *   - render 抛异常时【绝不】取消已排队的 rAF 帧，并让异常可见（console.error）。
+     *     旧实现 `try{render}catch{}` + 无条件 cancel，会精确制造
+     *     「点了没反应、停下来也永远不出现、下一次点击才恢复」的死画面。
+     *   - 仅当本次同步绘制成功、且没有后续动画帧要画（needMore=false）时，
+     *     才吸收掉此前已排队的那一帧（它只会重画同一张静态画面）。
      */
     _paintNow: function () {
+      const tr = TR();
+      const rafBefore = this._raf;
+      let errMsg = null;
+      let needMore = false;
       try {
-        this.render(Util.now());
-      } catch (err) { /* 兜底：同步绘制失败不应打断输入 */ }
-      if (this._raf) { cancelAnimationFrame(this._raf); this._raf = 0; }
+        needMore = this.render(Util.now());
+      } catch (err) {
+        errMsg = (err && err.message) || String(err);
+        if (global.console && global.console.error) {
+          global.console.error('[BEADY] 首触同步绘制失败（已保留排队帧，不打断输入）:', err);
+        }
+        if (tr) tr.log({ ev: 'PAINT_ERROR', msg: errMsg, where: (err && err.stack ? String(err.stack).split('\n').slice(1, 3).join(' | ') : '') });
+      }
+      const rafAfterRender = this._raf;
+      let cancelled = false;
+      if (!errMsg && !needMore && rafBefore && this._raf === rafBefore) {
+        cancelAnimationFrame(this._raf);
+        this._raf = 0;
+        cancelled = true;
+      }
+      if (tr) tr.log({ ev: 'paintNow', rafBefore: rafBefore, rafAfterRender: rafAfterRender,
+                       needMore: needMore, cancelled: cancelled, rafEnd: this._raf, err: errMsg });
     },
 
     _layerNeeded: function () {
@@ -721,6 +772,8 @@
     },
 
     render: function (now) {
+      const tr = TR();
+      if (tr) { tr._seq = (tr._seq || 0) + 1; tr.frameStart(tr._seq); }
       const ctx = this.ctx, dpr = this.dpr;
       const W = this.canvas.width, H = this.canvas.height;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -749,7 +802,17 @@
       for (let i = 0; i < this.grid.length; i++) {
         const c = this.grid[i];
         if (c === Palette.EMPTY) continue;
-        if (this.anims.has(i)) continue;      // 动画中的由下方单独绘制
+        // 正在播放动画的格子由下方第 3 步单独绘制；但【动画已过期】的格子必须在这里补画。
+        // 否则「动画过期的那一帧」会被上下两趟同时跳过：静态趟因 anims.has(i) 跳过、
+        // 动画趟因 el >= 时长 跳过，而 anims.delete 在该帧末尾才发生 —— 于是该帧
+        // clearRect 之后什么都没画；若此后没有新的渲染，豆子就永久消失
+        // （正是「首次单击无效 / 停下来也不出现 / 再点一次才出现」的根因）。
+        const a = this.anims.get(i);
+        if (a) {
+          const dur = a.type === 'place' ? PLACE_MS : ERASE_MS;
+          if (t - a.t0 < dur) continue;
+        }
+        if (tr) tr.drew(i);
         this._drawCell(ctx, i, cell, cellDev);
       }
 
@@ -763,6 +826,7 @@
         if (a.type === 'place') {
           if (el >= PLACE_MS) { expired.push(i); return; }
           needMore = true;
+          if (tr) tr.drew(i);
           const q = Util.clamp(el / PLACE_MS, 0, 1);
           const col = i % size, row = (i / size) | 0;
           const cx = this.ox + col * cell, cy = this.oy + row * cell;
@@ -830,7 +894,12 @@
       // 6) 熨烫覆盖层
       if (this.iron) { this._renderIron(ctx, t); needMore = true; }
 
+      if (tr) tr.log({ ev: 'render', seq: tr._seq, size: size, cell: cell, ox: this.ox, oy: this.oy,
+                       drewN: tr.frame ? tr.frame.drew.length : 0, drewIdx: tr.frame ? tr.frame.drew.slice(0, 40) : [],
+                       needMore: needMore, layerKey: this._layerKey, cw: this.canvas.width, ch: this.canvas.height });
+
       if (needMore) this.requestRender();
+      return needMore;
     },
 
     _drawSpriteAt: function (ctx, colorIdx, cx, cy, cell, cellDev, scale, dy) {
