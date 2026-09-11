@@ -90,7 +90,17 @@
       <button class="icon-btn" id="ed-back" title="返回"><span class="ico-back"></span></button>
 
       <div class="ed-head-main">
-        <h2 id="ed-title">自由拼豆</h2>
+        <button class="ed-title-btn" id="ed-title-btn" type="button"
+                aria-haspopup="menu" aria-expanded="false" title="选择画板尺寸">
+          <span class="ed-title-text" id="ed-title">自由拼豆</span>
+          <span class="ed-title-caret" aria-hidden="true"></span>
+        </button>
+        <div class="size-menu" id="size-menu" role="menu" aria-label="画板尺寸" hidden>
+          <button class="size-opt" type="button" role="menuitem" data-size="16">16×16</button>
+          <button class="size-opt" type="button" role="menuitem" data-size="24">24×24</button>
+          <button class="size-opt" type="button" role="menuitem" data-size="32">32×32</button>
+          <button class="size-opt" type="button" role="menuitem" data-size="48">48×48</button>
+        </div>
         <div class="ed-progress hidden" id="ed-progress">
           <div class="pg-bar"><i id="ed-progress-bar"></i></div>
           <span class="pg-num"><b id="ed-progress-num">0 / 0</b><em id="ed-progress-pct">0%</em></span>
