@@ -267,12 +267,64 @@ p { margin: 0; }
 .ed-head {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 16px; flex: none;
+  /* 头部必须自成层叠上下文并压住画布：
+     .ed-stage 是 position:relative（z-index auto），若头部仍为 static
+     就会被画布盖住；PC 上因为有 .ed-side 把画布右推才看不出来，
+     手机上画布铺满整宽，尺寸下拉菜单就会被画布吃掉点击（真实缺陷）。 */
+  position: relative; z-index: 30;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 253, 248, .88);
   backdrop-filter: blur(8px);
 }
-.ed-head-main { flex: 1; min-width: 0; }
-.ed-head-main h2 { font-size: 16.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ed-head-main { flex: 1; min-width: 0; position: relative; }
+
+/* 标题同时是「自由模式画板尺寸」的入口（模板模式下禁用） */
+.ed-title-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  max-width: 100%; margin-left: -5px; padding: 5px 9px 5px 5px;
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  background: none; font: inherit; color: inherit;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background .15s, border-color .15s;
+}
+.ed-title-btn:hover { background: rgba(140, 118, 84, .08); border-color: var(--line); }
+.ed-title-btn.is-static { pointer-events: none; cursor: default; }
+.ed-title-btn.is-static:hover { background: none; border-color: transparent; }
+.ed-title-text {
+  font-size: 16.5px; font-weight: 700; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ed-title-caret {
+  flex: none; width: 0; height: 0; margin-top: 3px;
+  border-left: 4.5px solid transparent; border-right: 4.5px solid transparent;
+  border-top: 5.5px solid var(--muted);
+  transition: transform .16s ease;
+}
+.ed-title-btn.is-open .ed-title-caret { transform: rotate(180deg); }
+.ed-title-btn.is-static .ed-title-caret { display: none; }
+
+/* 尺寸菜单（PC / 手机均易于点击：每项 >=40px） */
+.size-menu {
+  position: absolute; left: -5px; top: calc(100% + 8px); z-index: 60;
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 138px; padding: 6px;
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--r-md); box-shadow: var(--sh-2);
+  animation: sizeMenuIn .14s ease-out;
+}
+.size-menu[hidden] { display: none; }
+@keyframes sizeMenuIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+.size-opt {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-height: 40px; padding: 0 12px;
+  border: 0; border-radius: 9px; background: none;
+  font: inherit; font-size: 14px; color: var(--ink2);
+  text-align: left; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.size-opt:hover { background: rgba(140, 118, 84, .09); }
+.size-opt.is-on { background: var(--brand-l); color: var(--brand-d); font-weight: 700; }
+.size-opt.is-on::after { content: "✓"; font-size: 12px; }
 .ed-progress { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
 .pg-bar { flex: 1; max-width: 220px; height: 7px; background: var(--line); border-radius: 999px; overflow: hidden; }
 .pg-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #7FC08A, #56A568); border-radius: 999px; transition: width .25s ease; }
@@ -509,10 +561,16 @@ input[type=range] { flex: 1; min-width: 120px; accent-color: var(--brand); }
   .m-tools { display: flex; gap: 8px; }
 
   .ed-head { padding: 8px 12px; gap: 8px; }
-  .ed-head-main h2 { font-size: 14.5px; }
-  .ed-head-tools .btn span:not(.btn-ico) { display: none; }
-  .ed-head-tools .btn { padding: 9px 12px; }
-  .ed-head-tools #ed-save .ico-save { display: block; }
+  .ed-title-text { font-size: 14.5px; }
+  /* 头部工具按钮的文案是「裸文本节点」，`span:not(.btn-ico)` 选不中，
+     原来这条规则其实没生效 → 头部被撑爆、标题被挤成 0 宽（尺寸入口看不见）。
+     图标是固定 px 尺寸，用 font-size:0 收起文字最稳妥。 */
+  /* 文案收起后 .btn 的 gap 仍会占位，一并去掉，把宽度让给标题 */
+  .ed-head-tools .btn { font-size: 0; gap: 0; padding: 8px 9px; }
+  /* 撤销 / 重做 / 音效在移动端底部工具栏已有，头部不再重复，把宽度让给标题 */
+  .ed-head-tools #ed-undo,
+  .ed-head-tools #ed-redo,
+  .ed-head-tools #ed-sound { display: none; }
   .ed-head-tools { gap: 5px; }
   .ed-head-tools .tool-btn { width: 34px; height: 34px; }
 
