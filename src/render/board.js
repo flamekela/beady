@@ -12,12 +12,13 @@
   const Sprites = global.BeadySprites;
   const Audio = global.BeadyAudio;
 
-  const PLACE_MS = 170;      // 放置落下动画
+  const PLACE_MS = 110;      // 放置 pop 动画（必须极短，否则连续点按会显得迟钝）
+  const PLACE_POP = 0.045;   // pop 峰值幅度：最大约 1.045 倍
+  const PLACE_SETTLE = 0.045;// 落定下沉幅度（格）
   const ERASE_MS = 150;      // 移除（橡皮 / Undo）动画
   const WRONG_MS = 620;      // 放错色红框提示时长
   const CELL_MIN = 5, CELL_MAX = 72;
 
-  function easeOutBack(p) { const s = 1.55; return 1 + (s + 1) * Math.pow(p - 1, 3) + s * Math.pow(p - 1, 2); }
   function easeOutCubic(p) { return 1 - Math.pow(1 - p, 3); }
   function smoothstep(p) { return p <= 0 ? 0 : (p >= 1 ? 1 : p * p * (3 - 2 * p)); }
 
@@ -75,9 +76,23 @@
 
     /* ==================== 生命周期 / 数据 ==================== */
 
-    setSize: function (n) {
+    /**
+     * 设定画板尺寸。
+     *
+     * 默认语义 = 「仅调整尺寸」：尺寸没变时是 no-op（保留当前内容），
+     * 只有尺寸真的变了才重建。用于尺寸切换等需要保留/重建内容的场合。
+     *
+     * opts.reset === true = 「新建空白画板」：无论尺寸是否变化，一律清空
+     * grid / 目标图 / 历史(undo·redo) / 动画 / 错误标记 / 粒子 / 熨烫状态 /
+     * 编辑笔状态 / 图层缓存，并重绘 + 通知宿主。
+     *
+     * 业务意图是「新建」时请调用 newBoard()，不要用 setSize() 表达 —— 因为
+     * 同尺寸的 setSize() 是 no-op，表达不出「清空」。
+     */
+    setSize: function (n, opts) {
+      const reset = !!(opts && opts.reset);
       const p = Math.max(4, Math.min(96, n | 0));
-      if (p === this.size && this.grid.length === p * p) return;
+      if (!reset && p === this.size && this.grid.length === p * p) return;
       this.size = p;
       this.grid = new Int16Array(p * p).fill(Palette.EMPTY);
       this.target = null; this.targetTotal = 0; this.correctCount = 0;
@@ -85,9 +100,18 @@
       this.anims.clear(); this.wrong.clear(); this.sparks.length = 0;
       this.ironed = false; this.ironing = false; this.iron = null;
       this.completed = false; this._celebrated = false;
+      // 编辑笔状态：避免上一张板的笔画残留（残留的 stroke 会在 endStroke 时
+      // 把旧板的格子索引写进新板的历史栈）
+      this.stroke = null; this.lastCell = null; this.paintCount = 0;
+      this.pinch = null; this.panning = false;
       this._layerKey = '';
       this.requestRender();
       this._notify();
+    },
+
+    /** 新建一张空白画板（尺寸可变）。语义 = setSize(size, { reset: true }) */
+    newBoard: function (n) {
+      this.setSize(n, { reset: true });
     },
 
     /** 直接装载格子数据（长度需等于 size*size） */
@@ -409,6 +433,8 @@
 
       cv.addEventListener('pointerdown', function (e) {
         if (!self.interactive) return;
+        // 阻止 iOS 长按弹出「拷贝/查询」菜单，并确保后续能收到 pointerup
+        try { e.preventDefault(); } catch (err) { /* ignore */ }
         cv.setPointerCapture(e.pointerId);
         self.pointers.set(e.pointerId, self._pt(e));
 
@@ -420,7 +446,9 @@
             cx: (arr[0].x + arr[1].x) / 2, cy: (arr[0].y + arr[1].y) / 2,
             cell: self.cell
           };
-          self.stroke = null;
+          // 第二指落下前可能已经落下过一颗豆（浏览器会为每个触点单独派发 pointerdown）。
+          // 只要这一笔还是「本帧刚落下的单颗豆」，就判定为捏合缩放误触，直接收回。
+          self._cancelStroke();
           return;
         }
 
@@ -509,7 +537,8 @@
       this.lastCell = idx;
       this.setCell(idx, colorIdx, false);
       this.paintCount = 1;
-      this.requestRender();
+      // 首触必须当帧可见：立刻绘制，不等下一次 rAF 回调
+      this._paintNow();
       this._notify();
     },
 
@@ -534,8 +563,27 @@
       }
       this.lastCell = idx;
       this._recomputeProgress();
-      this.requestRender();
+      // 拖动同样当帧出豆：代价 O(移动经过的格子数)，只画主画布，不做任何 UI / 存储工作
+      this._paintNow();
       this._notify();
+    },
+
+    /** 撤销本次笔画中已放下的豆（仅用于双指缩放把误触豆收回） */
+    _cancelStroke: function () {
+      const st = this.stroke;
+      this.stroke = null;
+      this.lastCell = null;
+      this.paintCount = 0;
+      if (!st || !st.ops.length) return;
+      const ops = st.ops;
+      // 直接回滚 grid，不入历史栈（这一下本来就不算一次编辑）
+      for (let i = 0; i < ops.length; i++) {
+        this.grid[ops[i].i] = ops[i].from;
+        this.anims.delete(ops[i].i);
+        if (ops[i].to !== Palette.EMPTY) this.wrong.delete(ops[i].i);
+      }
+      this._recomputeProgress();
+      this._paintNow();
     },
 
     endStroke: function () {
@@ -574,6 +622,35 @@
         self._raf = 0;
         self.render(t);
       });
+    },
+
+    /**
+     * 首触即时反馈：立即同步绘制一帧。
+     * 只负责把「当前 grid / anims」画到画布上，不含任何 UI 或存储工作。
+     *
+     * 安全写法（FIX01-R1）：
+     *   - render 抛异常时【绝不】取消已排队的 rAF 帧，并让异常可见（console.error）。
+     *     旧实现 `try{render}catch{}` + 无条件 cancel，会精确制造
+     *     「点了没反应、停下来也永远不出现、下一次点击才恢复」的死画面。
+     *   - 仅当本次同步绘制成功、且没有后续动画帧要画（needMore=false）时，
+     *     才吸收掉此前已排队的那一帧（它只会重画同一张静态画面）。
+     */
+    _paintNow: function () {
+      const rafBefore = this._raf;
+      let errMsg = null;
+      let needMore = false;
+      try {
+        needMore = this.render(Util.now());
+      } catch (err) {
+        errMsg = (err && err.message) || String(err);
+        if (global.console && global.console.error) {
+          global.console.error('[BEADY] 首触同步绘制失败（已保留排队帧，不打断输入）:', err);
+        }
+      }
+      if (!errMsg && !needMore && rafBefore && this._raf === rafBefore) {
+        cancelAnimationFrame(this._raf);
+        this._raf = 0;
+      }
     },
 
     _layerNeeded: function () {
@@ -712,27 +789,37 @@
       for (let i = 0; i < this.grid.length; i++) {
         const c = this.grid[i];
         if (c === Palette.EMPTY) continue;
-        if (this.anims.has(i)) continue;      // 动画中的由下方单独绘制
+        // 正在播放动画的格子由下方第 3 步单独绘制；但【动画已过期】的格子必须在这里补画。
+        // 否则「动画过期的那一帧」会被上下两趟同时跳过：静态趟因 anims.has(i) 跳过、
+        // 动画趟因 el >= 时长 跳过，而 anims.delete 在该帧末尾才发生 —— 于是该帧
+        // clearRect 之后什么都没画；若此后没有新的渲染，豆子就永久消失
+        // （正是「首次单击无效 / 停下来也不出现 / 再点一次才出现」的根因）。
+        const a = this.anims.get(i);
+        if (a) {
+          const dur = a.type === 'place' ? PLACE_MS : ERASE_MS;
+          if (t - a.t0 < dur) continue;
+        }
         this._drawCell(ctx, i, cell, cellDev);
       }
 
       // 3) 动画中的拼豆
+      //    首触即时反馈：豆子第一帧就「已经在那里」了。
+      //    起始 scale/alpha 都接近常态，之后只做轻微的 pop 与落定震动；
+      //    没有从空中掉下来的过程，所以不存在「第一下看不见」的观感。
       const expired = [];
       this.anims.forEach(function (a, i) {
         const el = t - a.t0;
         if (a.type === 'place') {
           if (el >= PLACE_MS) { expired.push(i); return; }
           needMore = true;
-          const p = easeOutBack(el / PLACE_MS);
-          const py = (1 - easeOutCubic(el / PLACE_MS));
+          const q = Util.clamp(el / PLACE_MS, 0, 1);
           const col = i % size, row = (i / size) | 0;
           const cx = this.ox + col * cell, cy = this.oy + row * cell;
-          const scale = 0.5 + 0.5 * p;
-          const dy = -py * cell * 0.55;
-          ctx.save();
-          ctx.globalAlpha = Util.clamp(0.35 + 0.65 * (el / PLACE_MS), 0, 1);
+          // 弹性缩放：0.90 → 约 1.04 → 1.00
+          const scale = 1 + PLACE_POP * Math.sin(Math.PI * Math.pow(q, 0.7));
+          // 极轻微的落定下沉，模拟「按下去」的手感（最大约 0.045 格）
+          const dy = PLACE_SETTLE * cell * Math.sin(Math.PI * q);
           this._drawSpriteAt(ctx, a.color, cx, cy, cell, cellDev, scale, dy);
-          ctx.restore();
         } else {
           if (el >= ERASE_MS) { expired.push(i); return; }
           needMore = true;
@@ -793,6 +880,7 @@
       if (this.iron) { this._renderIron(ctx, t); needMore = true; }
 
       if (needMore) this.requestRender();
+      return needMore;
     },
 
     _drawSpriteAt: function (ctx, colorIdx, cx, cy, cell, cellDev, scale, dy) {
@@ -910,8 +998,16 @@
         requestAnimationFrame(step);
         setTimeout(function () {
           clearInterval(self._ironTick);
-          if (self.iron && self.iron.stopSound) { self.iron.stopSound(); self.iron.stopSound = null; }
-        }, PAPER + IRON + LIFT + 60);
+          // 兜底：因页面切后台等极端情况错过相位推进时，别让熨斗永远卡在画板渲染里
+          if (self.iron) {
+            if (self.iron.stopSound) { self.iron.stopSound(); self.iron.stopSound = null; }
+            self.iron = null;
+            self.ironing = false;
+            self.ironed = true;
+            self.setInteractive(true);
+            self.requestRender();
+          }
+        }, PAPER + IRON + LIFT + 2500);
         return;
       });
     },
