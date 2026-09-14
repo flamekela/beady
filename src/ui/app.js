@@ -75,6 +75,7 @@
     pendingImage: null,
     imageResult: null,
     _baseCell: 24,
+    _uiRaf: 0,
 
     init: function () {
       Templates.list = Templates.load();
@@ -114,6 +115,8 @@
         galEmpty: $('gal-empty'),
         edCanvas: $('ed-canvas'),
         edStage: $('ed-stage'),
+        edTitleBtn: $('ed-title-btn'),
+        sizeMenu: $('size-menu'),
         palList: $('pal-list'),
         palCur: $('pal-cur-cv'),
         edColors: $('ed-colors')
@@ -141,11 +144,18 @@
       App._toastT = setTimeout(function () { t.classList.remove('is-on'); }, 1900);
     },
 
-    confirm: function (title, text) {
+    /**
+     * 通用确认框（Promise<boolean>）。
+     * opts.yesText / opts.noText 可自定义按钮文案（默认「确定」/「取消」）。
+     */
+    confirm: function (title, text, opts) {
+      const o = opts || {};
       return new Promise(function (resolve) {
         const m = $('modal-confirm');
         $('confirm-title').textContent = title;
         $('confirm-text').textContent = text || '';
+        $('confirm-yes').textContent = o.yesText || '确定';
+        $('confirm-no').textContent = o.noText || '取消';
         m.hidden = false;
         const done = function (v) {
           m.hidden = true;
@@ -390,16 +400,23 @@
       const sess = App.session;
       const b = App.board;
       $('stage-hint').textContent = '';
+      App.closeSizeMenu();
 
+      // 四条入口的语义在此明确区分：
+      //   首页「自由拼豆」/ 我的作品空态「开始拼豆」/ 图片转拼豆 / 模板挑战 → 新板
+      //   首页「继续上次」(restoreDraft=true)                              → 恢复草稿
+      //   「我的作品 → 继续编辑」→ 不走这里，由 editWork() 自行装载指定作品
       if (sess.mode === 'template') {
         const t = Templates.byId(sess.templateId);
         if (t) { b.loadTemplate(t); }
-        else if (restoreDraft) { App._loadDraftIntoBoard(); }
-        else { b.setSize(sess.size); b.target = null; }
+        else if (restoreDraft && Store.getDraft()) { App._loadDraftIntoBoard(); }
+        else { b.newBoard(sess.size); }        // 模板数据缺失时退化为空白板
       } else {
-        b.setSize(sess.size);
-        b.target = null;
-        if (restoreDraft) App._loadDraftIntoBoard();
+        b.target = null;                       // 自由创作没有目标图
+        // 必须用 newBoard 而非 setSize：自由模式尺寸恒为 24，而 setSize(24)
+        // 在同尺寸时是 no-op，表达不出「新建空白板」，会把上一张板的内容带进来。
+        if (restoreDraft && Store.getDraft()) App._loadDraftIntoBoard();
+        else b.newBoard(sess.size);
       }
       b.ironed = !!(restoreDraft && Store.getDraft() && Store.getDraft().ironed);
       b.showGhost = true;
@@ -407,7 +424,7 @@
       App.curTool = 'bead';
       App.syncToolButtons();
       App.rebuildSideColors();
-      App.updateEdUI();
+      App.updateEdUINow();
     },
 
     _loadDraftIntoBoard: function () {
@@ -418,19 +435,111 @@
       App.board.loadGrid(Util.decodeGrid(d.grid, d.size * d.size), d.size);
     },
 
+    /* ------------------ 自由模式：画板尺寸选择（FIX03） ------------------ */
+    /** 自由模式可选尺寸。
+     *  模板挑战（含图片转拼豆）由各自流程决定尺寸，不使用本选择器。 */
+    SIZE_OPTIONS: [16, 24, 32, 48],
+
+    /** 打开 / 关闭尺寸菜单。模板 / 图片模式下入口不存在，直接忽略。 */
+    toggleSizeMenu: function (force) {
+      const b = App.board;
+      if (!b || b.target) return;                       // 非自由模式：无尺寸选择器
+      const open = (force === undefined) ? !App._sizeMenuOpen : !!force;
+      App._sizeMenuOpen = open;
+      if (App.dom.sizeMenu) App.dom.sizeMenu.hidden = !open;
+      if (App.dom.edTitleBtn) {
+        App.dom.edTitleBtn.classList.toggle('is-open', open);
+        App.dom.edTitleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }
+      if (open) App._markSizeMenu();
+    },
+
+    closeSizeMenu: function () {
+      if (!App._sizeMenuOpen) return;
+      App._sizeMenuOpen = false;
+      if (App.dom.sizeMenu) App.dom.sizeMenu.hidden = true;
+      if (App.dom.edTitleBtn) {
+        App.dom.edTitleBtn.classList.remove('is-open');
+        App.dom.edTitleBtn.setAttribute('aria-expanded', 'false');
+      }
+    },
+
+    /** 把「当前画板尺寸」标记为选中项 */
+    _markSizeMenu: function () {
+      const menu = App.dom.sizeMenu;
+      if (!menu) return;
+      const cur = App.board ? App.board.size : 0;
+      const opts = menu.querySelectorAll('.size-opt');
+      for (let i = 0; i < opts.length; i++) {
+        opts[i].classList.toggle('is-on', parseInt(opts[i].getAttribute('data-size'), 10) === cur);
+      }
+    },
+
+    /**
+     * 选择画板尺寸（页面上的唯一入口）。
+     *   - 画板为空   → 直接新建
+     *   - 已有拼豆   → 必须先确认（绝不静默清空）
+     * V1.0 不做缩放迁移 / 裁剪，确认后就是一张空板。
+     */
+    pickSize: function (n) {
+      const b = App.board;
+      n = parseInt(n, 10);
+      if (!b || !n) return;
+      App.closeSizeMenu();
+      if (App.SIZE_OPTIONS.indexOf(n) < 0) return;      // 只接受产品定义的档位
+      if (b.size === n) return;                         // 同尺寸：无事发生
+
+      const apply = function () {
+        App.session.size = n;                           // 会话尺寸同步（草稿 / 作品均取实际尺寸）
+        b.newBoard(n);                                  // 新建空板：含 grid / 历史 / 动画 / 图层缓存重置
+        App.rebuildSideColors();
+        requestAnimationFrame(function () {
+          b.resize();
+          b.fit(0.88);
+          App._baseCell = b.cell;
+          App.updateEdUINow();
+        });
+        App.toast('已切换到 ' + n + '×' + n);
+      };
+
+      if (!b.filledCount()) { apply(); return; }
+      App.confirm('切换画板尺寸？', '切换画板尺寸会清空当前未保存的内容，是否继续？', { yesText: '切换尺寸' })
+        .then(function (yes) { if (yes) apply(); });
+    },
+
     onEnterEditor: function () {
       const b = App.board;
       requestAnimationFrame(function () {
         b.resize();
         b.fit(0.88);
         App._baseCell = b.cell;
-        App.updateEdUI();
+        App.updateEdUINow();
       });
     },
 
     /** 由 Board 回调：progress / title / 按钮可用性 */
     updateEdUI: function () {
       const b = App.board;
+      if (!b) return;
+      // 拖动时 onChange 可能每移动一格就触发一次；输入热路径只负责画板，
+      // 这里把 DOM 写入合并到下一帧，保证连续点按 / 拖动不被 UI 工作拖慢。
+      App.saveDraft();
+      if (App._uiRaf) return;
+      App._uiRaf = requestAnimationFrame(function () {
+        App._uiRaf = 0;
+        App._syncEdUI();
+      });
+    },
+
+    /** 立即执行（不合并）——用于进入编辑器、载入作品、熨烫完成等需要同步外观的场合 */
+    updateEdUINow: function () {
+      if (App._uiRaf) { cancelAnimationFrame(App._uiRaf); App._uiRaf = 0; }
+      App._syncEdUI();
+    },
+
+    _syncEdUI: function () {
+      const b = App.board;
+      if (!b) return;
       const sess = App.session;
       $('ed-undo').disabled = !b.canUndo();
       $('ed-redo').disabled = !b.canRedo();
@@ -438,6 +547,14 @@
       $('ed-progress').classList.toggle('hidden', !isTpl);
       $('m-progress').classList.toggle('hidden', !isTpl);
       $('ed-side').classList.toggle('is-free', !isTpl);
+
+      // 自由模式才提供尺寸选择器；模板 / 图片模式禁用入口并隐藏小三角
+      const titleBtn = App.dom.edTitleBtn;
+      if (titleBtn) {
+        titleBtn.classList.toggle('is-static', isTpl);
+        titleBtn.title = isTpl ? '' : '选择画板尺寸';
+      }
+      if (isTpl) App.closeSizeMenu();
 
       if (isTpl) {
         const t = Templates.byId(sess.templateId);
@@ -453,10 +570,10 @@
         const filled = b.filledCount();
         $('ed-title').textContent = '自由拼豆 · ' + b.size + '×' + b.size;
         $('ed-title').setAttribute('data-filled', filled);
+        App._markSizeMenu();          // 菜单里的选中项跟随当前尺寸
       }
       const pct = Math.round(b.cell / (App._baseCell || 24) * 100);
       $('ed-zoom-val').textContent = pct + '%';
-      App.saveDraft();
     },
 
     rebuildSideColors: function () {
@@ -557,6 +674,7 @@
     _bindEditor: function () {
       const canvas = App.dom.edCanvas;
       App.board = new Board(canvas, {
+        // 热路径只做画板绘制 + 合并到下一帧的轻量 UI 刷新，不阻塞输入
         onChange: function () { App.updateEdUI(); },
         onComplete: function () {
           App.toast('完成啦！要不要熨烫一下？');
@@ -584,9 +702,9 @@
       });
       wrapToButton('ed-iron', function () { App.doIron(); });
       wrapToButton('ed-save', function () { App.doSave(); });
-      wrapToButton('ed-fit', function () { App.board.fit(0.88); App._baseCell = App.board.cell; App.updateEdUI(); });
-      wrapToButton('ed-zoom-in', function () { App.board.zoomAt(1.25); App.updateEdUI(); });
-      wrapToButton('ed-zoom-out', function () { App.board.zoomAt(0.8); App.updateEdUI(); });
+      wrapToButton('ed-fit', function () { App.board.fit(0.88); App._baseCell = App.board.cell; App.updateEdUINow(); });
+      wrapToButton('ed-zoom-in', function () { App.board.zoomAt(1.25); App.updateEdUINow(); });
+      wrapToButton('ed-zoom-out', function () { App.board.zoomAt(0.8); App.updateEdUINow(); });
       wrapToButton('ed-ghost', function () {
         App.board.showGhost = !App.board.showGhost;
         App.board._layerKey = '';
@@ -595,6 +713,29 @@
       });
       wrapToButton('m-undo', function () { App.board.undo(); });
       wrapToButton('m-redo', function () { App.board.redo(); });
+
+      /* -------- 自由模式：画板尺寸选择（点标题 → 小型菜单） -------- */
+      const titleBtn = $('ed-title-btn');
+      const sizeMenu = $('size-menu');
+      if (titleBtn) {
+        titleBtn.addEventListener('click', function () { Audio.unlock(); App.toggleSizeMenu(); });
+      }
+      if (sizeMenu) {
+        sizeMenu.addEventListener('click', function (e) {
+          const opt = (e.target && e.target.closest) ? e.target.closest('.size-opt') : null;
+          if (!opt) return;
+          Audio.unlock(); Audio.tap();
+          App.pickSize(opt.getAttribute('data-size'));
+        });
+      }
+      // 点菜单以外的任何地方收起菜单
+      document.addEventListener('click', function (e) {
+        if (!App._sizeMenuOpen) return;
+        const t = e.target;
+        if (titleBtn && titleBtn.contains(t)) return;
+        if (sizeMenu && sizeMenu.contains(t)) return;
+        App.closeSizeMenu();
+      });
 
       const toggleSound = function () {
         const on = !(App.settings.sound !== false);
@@ -783,7 +924,7 @@
       b._recomputeProgress();
       App.rebuildSideColors();
       App.setTool('bead');
-      requestAnimationFrame(function () { b.resize(); b.fit(0.88); App._baseCell = b.cell; App.updateEdUI(); });
+      requestAnimationFrame(function () { b.resize(); b.fit(0.88); App._baseCell = b.cell; App.updateEdUINow(); });
     },
 
     viewWork: function (w) {
@@ -819,7 +960,7 @@
         else { App.board.loadGrid(new Int16Array(App.board.size * App.board.size).fill(-1), App.board.size); }
         App.board.ironed = false;
         App.session.workId = null;
-        App.updateEdUI();
+        App.updateEdUINow();
         App.toast('新的一张，开始吧');
       });
       $('finish-home').addEventListener('click', function () {
@@ -890,7 +1031,7 @@
         App.setTool('bead');
         App.rebuildSideColors();
         requestAnimationFrame(function () {
-          b.resize(); b.fit(0.88); App._baseCell = b.cell; b.requestRender(); App.updateEdUI();
+          b.resize(); b.fit(0.88); App._baseCell = b.cell; b.requestRender(); App.updateEdUINow();
         });
       });
     },
